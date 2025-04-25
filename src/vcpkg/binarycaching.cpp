@@ -527,7 +527,7 @@ namespace
                                                    templ.headers,
                                                    zip_path,
                                                    cache_size,
-                                                   50ULL * 1024ULL * 1024ULL);
+                                                   1000ULL * 1024ULL * 1024ULL);
                 if (maybe_success)
                 {
                     count_stored++;

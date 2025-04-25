@@ -840,45 +840,42 @@ namespace vcpkg
         std::cout << "file_size1: " << file_size << "\n";
         std::cout << "chunk_size1: " << chunk_size << "\n";
 
-        Command version_cmd;
-        version_cmd.string_arg("C:/Users/cloudtest/AppData/Local/Temp/curl-8.13.0/curl-8.13.0_1-win64-mingw/bin/curl.exe").string_arg("--version");
-        cmd_execute(version_cmd);
-
         Command base_cmd, base_cmd_without_headers;
-        base_cmd_without_headers.string_arg("C:/Users/cloudtest/AppData/Local/Temp/curl-8.13.0/curl-8.13.0_1-win64-mingw/bin/curl.exe").string_arg("-X").string_arg("PUT").string_arg("-w").string_arg(
+        base_cmd_without_headers.string_arg("curl").string_arg("-X").string_arg("PUT").string_arg("-w").string_arg(
             "\\n" + guid_marker.to_string() + "%{http_code}\n");
-        base_cmd = base_cmd_without_headers;
-        add_curl_headers(base_cmd, headers);
+        base_cmd.string_arg("curl").string_arg("--fail-early");
 
         auto file_ptr = fs.open_for_read(file, VCPKG_LINE_INFO);
         std::vector<char> buffer(chunk_size);
         std::vector<std::string> block_ids;
-        std::size_t start_offset = 0, end_offset = 0, idx = 0;
-        while ( start_offset < file_size)
+        auto block_file = fmt::format("{}.chunk", file);
+        for (size_t range_from = 0, idx = 0; range_from < file_size; range_from += chunk_size, ++idx)
         {
-            std::size_t chunk_size_bytes = std::min(chunk_size, file_size - start_offset);
-            end_offset = start_offset + chunk_size_bytes - 1;
-            std::cout << "start_offset: " << start_offset << "\n";
-            std::cout << "end_offset: " << end_offset << "\n";
+            size_t range_to = std::min(range_from + chunk_size, file_size);
+            std::cout << "range_to: " << range_to << "\n";
+            std::cout << "range_from: " << range_from << "\n";
             auto cmd = base_cmd;
+            // Extract block data locally
+            cmd.string_arg("-o").string_arg(block_file);
+            cmd.string_arg("--range").string_arg(fmt::format("{}-{}", range_from, range_to - 1));
+            cmd.string_arg(fmt::format("file://{}", file));
+            cmd.string_arg("--next");
+        
+            // Upload block
+            add_curl_headers(cmd, headers);
+            cmd.string_arg("-X").string_arg("PUT");
             std::stringstream stream;
             stream << std::setw(4) << std::setfill('0') << idx;
             std::string block_id = stream.str();
             block_ids.push_back(block_id);
             std::string block_url = fmt::format("{}&comp=block&blockid={}", url, block_id);
             cmd
-            .string_arg("-H")
-            .string_arg("Content-Type: application/x-www-url-formencoded")
-            .string_arg("--variable")
-            .string_arg(fmt::format("binary[{}-{}]@{}", start_offset, end_offset, file.c_str()))
             .string_arg(block_url)
-            .string_arg("--expand-data-binary")
-            .string_arg("'{{binary:b64}}'");
+            .string_arg("-T").string_arg(block_file);
 
             std::cout << "Curl Command: " << cmd.c_str() << "\n";
             int code = 0;
-            RedirectedProcessLaunchSettings launch_settings;
-            auto res = cmd_execute_and_stream_lines(cmd, launch_settings, [&code](StringView line) {
+            auto res = cmd_execute_and_stream_lines(context, cmd, [&code](StringView line) {
                 if (Strings::starts_with(line, guid_marker))
                 {
                     code = std::strtol(line.data() + guid_marker.size(), nullptr, 10);
@@ -898,8 +895,6 @@ namespace vcpkg
                                      msg::value = code);
                 return false;
             }
-            start_offset += chunk_size;
-            idx++;
         }
 
         std::string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>\n";
